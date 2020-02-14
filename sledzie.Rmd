@@ -1,0 +1,283 @@
+ 
+---
+title: "Karłowacenie śledzi"
+author: "Bartosz Szymański"
+date: "`r format(Sys.time(), '%d %B, %Y')`"
+output: 
+  html_document:
+    toc: true
+    toc_float: 
+      collapsed: true
+    df_print: paged
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+### 0. Podsumowanie analizy
+Celem analizy tego zbioru danych było znalezienie możliwych przyczyn spadku rozmiaru śledzia oceanicznego wyławianego w Europie.
+Po przejrzeniu danych ze zbioru można zauważyć, że braki danych nie występują w kolumnach length, recr i cumf. Reszta kolumn powinna zawierać stałe dane dla danego połowu, wystarczyło więc pogrupować dane po połowach. Nie było to takie oczywiste, bo mimo chronologii danych, zdarzały się miejsca, gdzie dane z poszczególnych połowów się przeplatały. Konieczne było obliczenie numeru roku dla każdego połowu, a następnie grupowanie po nim, aby obliczyć średnią długość w danym roku.
+
+Po wyznaczeniu korelacji między poszczególnymi atrybutami można zauważyć, że największą korelację do długości ma atrybut sst mówiący o temperaturze przy powierzchni wody. Korelacja ta jest ujemna, a więc wraz ze wzrostem temperatury maleje średnia długość śledzia. Dalej znaczącymi atrybutami wydają się być nao z ujemną korelacją i fbar z dodatnią czyli odpowiednio oscylacja północnoatlantycka i natężenie połowów w regionie.
+
+Na podstawie analizy ważności atrybutów modelu regresji dostajemy podobne odpowiedzi. Czyli, że głównym czynnikiem wpływającym na długość śledzia jest sst. Na drugiej pozycji pojawia się recr oznaczający roczny narybek.
+
+Na koniec, aby lepiej zauważyć te zależności narysowałem wykresy dla znormalizowanych atrybutów length i sst.
+
+Jak widać na stworzonym wykresie w dużej mierze wzrostowi długości śledzia odpowiada zmniejszenie się sst.
+Można przypuszczać, że oddziaływanie zarówno sst działa na długość śledzia z pewnym opóźnieniem, stąd pewne nieścisłości w wykresie.
+
+### 1. Biblioteki
+
+```{r, message=FALSE}
+library(dplyr)
+library(ggplot2)
+library(gganimate)
+library(corrplot)
+library(caret)
+library(mlbench)
+library(randomForest)
+library(Metrics)
+```
+
+### 2. Powtarzalność wyników
+```{r seedowanie}
+set.seed(2137)
+```
+
+### 3. Wczytanie danych z pliku
+
+```{r wczytanie, cache=TRUE, cache.lazy=FALSE}
+raw_data = read.csv(url("http://www.cs.put.poznan.pl/dbrzezinski/teaching/sphd/sledzie.csv"), na.strings = "?")
+```
+
+#### Nazwy kolumn:
+```{r nazwy_kolumn, echo=FALSE}
+names(raw_data)
+```
+
+#### Liczba kolumn:
+
+```{r liczba_kolumn, echo=FALSE}
+length(raw_data)
+```
+
+#### Liczba wierszy:
+
+```{r liczba_wierszy, echo=FALSE}
+nrow(raw_data)
+```
+
+#### Jak wyglądają dane?
+
+```{r glowa, echo=FALSE}
+head(raw_data)
+```
+
+### 4. Przetworzenie brakujących danych 
+
+```{r , echo=FALSE, cache=TRUE, cache.lazy=FALSE}
+print_lengths <- function(row) {
+  print(length(row[!is.na(row)]))
+}
+print("Liczba niepustych wartości length")
+print_lengths(raw_data$length)
+print("Liczba niepustych wartości recr")
+print_lengths(raw_data$recr)
+print("Liczba niepustych wartości cumf")
+print_lengths(raw_data$cumf)
+
+grouped_data <- raw_data %>% group_by(recr, add=TRUE) %>% summarise(sredn_x = min(X)) %>% arrange(sredn_x) %>% mutate(rok=row_number())
+
+head(grouped_data)
+raw_data_year <- mutate(raw_data, rok=0)
+for (row in 1: nrow(raw_data_year)) {
+  raw_data_recr <- raw_data_year[row, "recr"]
+  raw_data_year[row, "rok"] <- grouped_data[grouped_data$recr == raw_data_recr, "rok"]
+}
+
+```
+```{r, echo=FALSE, cache=TRUE, cache.lazy=FALSE}
+data_by_year <- arrange(raw_data_year, rok, xmonth) %>% group_by(rok) %>% summarise(
+  cfin1=first(na.omit(cfin1)),
+  cfin2=first(na.omit(cfin2)),
+  chel1=first(na.omit(chel1)),
+  chel2=first(na.omit(chel2)),
+  lcop1=first(na.omit(lcop1)),
+  lcop2=first(na.omit(lcop2)),
+  fbar=first(na.omit(fbar)),
+  recr=first(na.omit(recr)),
+  cumf=first(na.omit(cumf)),
+  totaln=first(na.omit(totaln)),
+  sst=first(na.omit(sst)),
+  sal=first(na.omit(sal)),
+  nao=first(na.omit(nao))
+  )
+
+```
+```{r}
+clean_data <- raw_data_year %>% mutate(
+  cfin1=data_by_year$cfin1[rok],
+  cfin2=data_by_year$cfin2[rok],
+  chel1=data_by_year$chel1[rok],
+  chel2=data_by_year$chel2[rok],
+  lcop1=data_by_year$lcop1[rok],
+  lcop2=data_by_year$lcop2[rok],
+  fbar=data_by_year$fbar[rok],
+  recr=data_by_year$recr[rok],
+  cumf=data_by_year$cumf[rok],
+  totaln=data_by_year$totaln[rok],
+  sst=data_by_year$sst[rok],
+  sal=data_by_year$sal[rok],
+  nao=data_by_year$nao[rok]
+  )
+```
+
+```{r, echo=FALSE, cache=TRUE, cache.lazy=FALSE}
+mean_length_month <- arrange(raw_data_year, rok, xmonth) %>% group_by(rok, xmonth) %>% summarise(
+  mean_length=mean(length),
+  cfin1=first(na.omit(cfin1)),
+  cfin2=first(na.omit(cfin2)),
+  chel1=first(na.omit(chel1)),
+  chel2=first(na.omit(chel2)),
+  lcop1=first(na.omit(lcop1)),
+  lcop2=first(na.omit(lcop2)),
+  fbar=first(na.omit(fbar)),
+  recr=first(na.omit(recr)),
+  cumf=first(na.omit(cumf)),
+  totaln=first(na.omit(totaln)),
+  sst=first(na.omit(sst)),
+  sal=first(na.omit(sal)),
+  nao=first(na.omit(nao))
+  )
+print('Rozmiar danych po zgrupowaniu po miesiącach i latach')
+print(nrow(mean_length_month))
+head(mean_length_month)
+```
+
+
+### 5. Rozmiar zbioru i podstawowe statystyki
+
+#### Liczba kolumn po przetworzeniu brakujących danych:
+
+```{r, echo=FALSE}
+length(clean_data)
+```
+
+#### Liczba wierszy po przetworzeniu brakujących danych:
+
+```{r, echo=FALSE}
+nrow(clean_data)
+```
+
+#### Jak wyglądają dane po przetworzeniu brakujących danych?
+
+```{r, echo=FALSE}
+head(clean_data)
+```
+
+#### Podstawowe statystyki na temat danych?
+
+```{r, echo=FALSE}
+summary(clean_data)
+```
+
+### 6. Szczegółowa analiza wartości atrybutów
+
+```{r analiza_wartosci, cache=TRUE, cache.lazy=FALSE, echo=FALSE}
+ggplot(clean_data, mapping = aes(x = length)) + geom_histogram(color="black", fill="red", binwidth = 1)
+ggplot(clean_data, mapping = aes(x = cfin1)) + geom_histogram(color="black", fill="red", binwidth = 0.5)
+ggplot(clean_data, mapping = aes(x = cfin2)) + geom_histogram(color="black", fill="red", binwidth = 0.5)
+ggplot(clean_data, mapping = aes(x = chel1)) + geom_histogram(color="black", fill="red", binwidth = 5)
+ggplot(clean_data, mapping = aes(x = chel2)) + geom_histogram(color="black", fill="red", binwidth = 5)
+ggplot(clean_data, mapping = aes(x = lcop1)) + geom_histogram(color="black", fill="red", binwidth = 5)
+ggplot(clean_data, mapping = aes(x = lcop2)) + geom_histogram(color="black", fill="red", binwidth = 5)
+ggplot(clean_data, mapping = aes(x = fbar)) + geom_histogram(color="black", fill="red", binwidth = 0.05)
+ggplot(clean_data, mapping = aes(x = recr)) + geom_histogram(color="black", fill="red", binwidth = 50000)
+ggplot(clean_data, mapping = aes(x = cumf)) + geom_histogram(color="black", fill="red", binwidth = 0.01)
+ggplot(clean_data, mapping = aes(x = totaln)) + geom_histogram(color="black", fill="red", binwidth = 50000)
+ggplot(clean_data, mapping = aes(x = sst)) + geom_histogram(color="black", fill="red", binwidth = 0.1)
+ggplot(clean_data, mapping = aes(x = sal)) + geom_histogram(color="black", fill="red", binwidth = 0.01)
+ggplot(clean_data, mapping = aes(x = xmonth)) + geom_histogram(color="black", fill="red", binwidth = 1)
+ggplot(clean_data, mapping = aes(x = nao)) + geom_histogram(color="black", fill="red", binwidth = 1)
+```
+
+### 7. Korelacja między zmiennymi
+```{r korelacja, cache=TRUE, cache.lazy=FALSE, echo=FALSE}
+M <- cor(clean_data %>% select(2:16))
+head(M)
+corrplot(M, method="number", type="upper", order="AOE", addCoefasPercent = TRUE)
+```
+
+### 8. Zmiana rozmiaru śledzia w czasie
+
+#### Zmiana średniego rozmiaru śledzia w kolejnych miesiącach
+```{r animacja_month, cache=TRUE, cache.lazy=FALSE, echo=FALSE}
+animacja <- mean_length_month %>% transmute(length = mean_length, czas = (12*rok + xmonth))
+ggplot(animacja, aes(x=czas, y=length)) + geom_line()
+ggplot(animacja, aes(x=czas, y=length)) + geom_line() + transition_reveal(czas)
+```
+
+#### Zmiana średniego rozmiaru śledzia w kolejnych latach
+```{r animacja_year, cache=TRUE, cache.lazy=FALSE, echo=FALSE}
+animacja_rok <- arrange(raw_data_year, rok) %>% group_by(rok) %>% summarise(
+  mean_length=mean(length)
+  )
+head(animacja_rok)
+ggplot(animacja_rok, aes(x=rok, y=mean_length)) + geom_line()
+ggplot(animacja_rok, aes(x=rok, y=mean_length)) + geom_line() + transition_reveal(rok)
+```
+
+### 9. Predykcja długości śledzia
+
+```{r regresja, cache=TRUE, cache.lazy=FALSE, echo=FALSE}
+regression_data <- clean_data %>% select(-X, -xmonth, -rok)
+
+idx <- createDataPartition(y = regression_data$length, p = .75, list = FALSE)
+training <- regression_data[idx,]
+testing <- regression_data[-idx,]
+
+ctrl <- trainControl(method = "repeatedcv",
+                     number=2,
+                     repeats=5)
+rfGrid <- expand.grid(mtry = 10:15)
+
+fit <- train(length ~ .,
+             data = training,
+             method = "rf",
+             metric = "Rsquared",
+             trControl = ctrl,
+             ntree = 15)
+rfClasses <- predict(fit, newdata = testing)
+```
+
+```{r miary, cache=TRUE, cache.lazy=FALSE, echo=FALSE}
+measure_rmse <- rmse(testing$length, rfClasses)
+measure_r_2 <- summary(lm(rfClasses ~ testing$length))$r.squared
+cat('Miara rmse: ', measure_rmse)
+cat('Miara r^2: ', measure_r_2)
+```
+### 10. Analiza ważności atrybutów
+```{r waznosc}
+varImp(fit, scale = FALSE)
+```
+
+### 11. Porównanie zmian Length i Sst
+```{r final_thought, cache=TRUE, cache.lazy=FALSE, echo=FALSE}
+min_length <- min(mean_length_month[,'mean_length'])
+max_length <- max(mean_length_month[,'mean_length'])
+min_sst <- min(mean_length_month[,'sst'])
+max_sst <- max(mean_length_month[,'sst'])
+min_fbar <- min(mean_length_month[,'fbar'])
+max_fbar <- max(mean_length_month[,'fbar'])
+
+animacja2 <- mean_length_month %>% transmute(length = (mean_length-min_length)/(max_length-min_length) , czas = (12*rok + xmonth), sst=(sst-min_sst)/(max_sst-min_sst))
+ggplot(animacja2, aes(x=czas)) + 
+  geom_line(aes(y=length, colour="Length")) + 
+  geom_line(aes(y=sst, colour="Sst")) +  
+  scale_colour_manual("", 
+                      breaks = c("Length", "Sst"),
+                      values=c("red","black")) +
+  labs(title="Porównanie zmian length i sst")
+```
