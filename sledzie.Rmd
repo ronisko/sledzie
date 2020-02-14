@@ -22,16 +22,16 @@ knitr::opts_chunk$set(echo = TRUE)
 
 ### 0. Podsumowanie analizy
 Celem analizy tego zbioru danych było znalezienie możliwych przyczyn spadku rozmiaru śledzia oceanicznego wyławianego w Europie.
-Po przejrzeniu danych ze zbioru można zauważyć, że braki danych nie występują w kolumnach length, recr i cumf. Reszta kolumn powinna zawierać stałe dane dla danego połowu, wystarczyło więc pogrupować dane po połowach. Nie było to takie oczywiste, bo mimo chronologii danych, zdarzały się miejsca, gdzie dane z poszczególnych połowów się przeplatały. Konieczne było obliczenie numeru roku dla każdego połowu, a następnie grupowanie po nim, aby obliczyć średnią długość w danym roku.
+Po zapoznaniu się ze zbiorem danych można zauważyć, że braki nie występują w kolumnach length, recr i cumf. Reszta kolumn powinna zawierać stałe dane dla danego połowu, wystarczyło więc pogrupować dane po połowach. Nie było to takie oczywiste, bo pomimo chronologii danych, zdarzały się miejsca, gdzie dane z poszczególnych połowów się przeplatały. Konieczne było obliczenie numeru roku dla każdego połowu, a następnie grupowanie po nim, aby obliczyć średnią długość w danym roku.
 
 Po wyznaczeniu korelacji między poszczególnymi atrybutami można zauważyć, że największą korelację do długości ma atrybut sst mówiący o temperaturze przy powierzchni wody. Korelacja ta jest ujemna, a więc wraz ze wzrostem temperatury maleje średnia długość śledzia. Dalej znaczącymi atrybutami wydają się być nao z ujemną korelacją i fbar z dodatnią czyli odpowiednio oscylacja północnoatlantycka i natężenie połowów w regionie.
 
-Na podstawie analizy ważności atrybutów modelu regresji dostajemy podobne odpowiedzi. Czyli, że głównym czynnikiem wpływającym na długość śledzia jest sst. Na drugiej pozycji pojawia się recr oznaczający roczny narybek.
+Na podstawie analizy ważności atrybutów modelu regresji dostajemy podobne odpowiedzi. Mianowicie, że głównym czynnikiem wpływającym na długość śledzia jest sst. Na drugiej pozycji pojawia się recr oznaczający roczny narybek.
 
 Na koniec, aby lepiej zauważyć te zależności narysowałem wykresy dla znormalizowanych atrybutów length i sst.
 
 Jak widać na stworzonym wykresie w dużej mierze wzrostowi długości śledzia odpowiada zmniejszenie się sst.
-Można przypuszczać, że oddziaływanie zarówno sst działa na długość śledzia z pewnym opóźnieniem, stąd pewne nieścisłości w wykresie.
+Można przypuszczać, że oddziaływanie sst działa na długość śledzia z pewnym opóźnieniem, stąd pewne nieścisłości w wykresie.
 
 ### 1. Biblioteki
 
@@ -229,7 +229,6 @@ ggplot(animacja, aes(x=czas, y=length)) + geom_line() + transition_reveal(czas)
 animacja_rok <- arrange(raw_data_year, rok) %>% group_by(rok) %>% summarise(
   mean_length=mean(length)
   )
-head(animacja_rok)
 ggplot(animacja_rok, aes(x=rok, y=mean_length)) + geom_line()
 ggplot(animacja_rok, aes(x=rok, y=mean_length)) + geom_line() + transition_reveal(rok)
 ```
@@ -274,8 +273,6 @@ min_length <- min(mean_length_month[,'mean_length'])
 max_length <- max(mean_length_month[,'mean_length'])
 min_sst <- min(mean_length_month[,'sst'])
 max_sst <- max(mean_length_month[,'sst'])
-min_fbar <- min(mean_length_month[,'fbar'])
-max_fbar <- max(mean_length_month[,'fbar'])
 
 animacja2 <- mean_length_month %>% transmute(length = (mean_length-min_length)/(max_length-min_length) , czas = (12*rok + xmonth), sst=(sst-min_sst)/(max_sst-min_sst))
 ggplot(animacja2, aes(x=czas)) + 
